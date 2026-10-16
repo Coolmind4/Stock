@@ -1,14 +1,21 @@
-# My Stock Research Lab v0.2
+# My Stock Research Lab v0.3
 
-## Files expected in the same folder
+## Expected files in the same GitHub folder
 - app.py
 - requirements.txt
 - sample_stocks.csv
 - my_stock_research_50_company_universe.csv
 
-## Run
-python -m pip install -r requirements.txt
-python -m streamlit run app.py
+## Streamlit secret
+In Streamlit Community Cloud → app Settings → Secrets:
+FMP_API_KEY = "your_actual_api_key"
 
-## Data warning
-The demo screener uses fictional figures. The 50-company CSV is a candidate universe only; it does not contain verified current financial statements or recommendations.
+Never commit your API key to GitHub or paste it into chat.
+
+## What changed
+Added a Provider Test tab that checks profile, income statement, balance sheet and cash-flow statement endpoints for the first five company candidates. This only tests API availability; it does not import figures into the screener.
+
+## Important
+- Demo Screener still uses synthetic figures.
+- The 50-company list is a candidate universe, not a buy recommendation.
+- Validate data, fiscal periods, units, currency and consolidated/standalone basis against company filings before using it.
