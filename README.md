@@ -1,21 +1,22 @@
-# My Stock Research Lab v0.3
+# My Stock Research Lab v0.4 — Financial Reports Importer
 
-## Expected files in the same GitHub folder
-- app.py
-- requirements.txt
-- sample_stocks.csv
-- my_stock_research_50_company_universe.csv
+## Files expected in the GitHub app folder
+- `app.py`
+- `requirements.txt`
+- `sample_stocks.csv` (keep your existing file)
+- `my_stock_research_50_company_universe.csv` (keep your existing file)
 
-## Streamlit secret
-In Streamlit Community Cloud → app Settings → Secrets:
-FMP_API_KEY = "your_actual_api_key"
+## What's new
+- Adds a **Financial Reports Importer** tab without removing the existing Demo Screener, 50-Company Universe, Data Status, or Provider Test tabs.
+- Upload annual-report/results PDFs to extract selectable text and candidate tables for review and download.
+- Upload structured CSV/XLSX files based on `financial_data_template.csv` to calculate preliminary revenue CAGR, profit CAGR, debt/equity, ROCE and P/E vs industry P/E.
+- Keeps source filing, page/URL, fiscal year, and consolidated/standalone basis fields alongside data.
 
-Never commit your API key to GitHub or paste it into chat.
+## Important limitations
+- PDF table extraction is a convenience for finding information, not a guaranteed or fully automated financial-statement parser. Scanned PDFs and complex layouts may not extract correctly.
+- Always verify figures against the original filing, including units, currency, reporting period and consolidated vs standalone basis.
+- CAGR requires at least four positive annual observations. Verify years are consecutive before relying on the result.
+- This app does not provide investment advice or live market data. The Demo Screener still uses fictional illustrative figures.
 
-## What changed
-Added a Provider Test tab that checks profile, income statement, balance sheet and cash-flow statement endpoints for the first five company candidates. This only tests API availability; it does not import figures into the screener.
-
-## Important
-- Demo Screener still uses synthetic figures.
-- The 50-company list is a candidate universe, not a buy recommendation.
-- Validate data, fiscal periods, units, currency and consolidated/standalone basis against company filings before using it.
+## Deploy update
+Replace only `app.py` and `requirements.txt` in your existing GitHub repository with the files in this update. Keep your existing CSV files and Streamlit Secrets. Do not put API keys in GitHub.

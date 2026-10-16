@@ -3,6 +3,8 @@ import pandas as pd
 import numpy as np
 import requests
 from pathlib import Path
+from io import BytesIO
+import re
 
 st.set_page_config(page_title="My Stock Research Lab", page_icon="📈", layout="wide")
 
@@ -119,7 +121,7 @@ def test_one_company(company, api_key):
 sample_df = load_sample()
 universe_df = load_universe()
 
-tab1, tab2, tab3, tab4 = st.tabs(["Demo Screener", "50-Company Universe", "Data Status", "Provider Test"])
+tab1, tab2, tab3, tab4, tab5 = st.tabs(["Demo Screener", "50-Company Universe", "Data Status", "Provider Test", "Financial Reports Importer"])
 
 with tab1:
     st.warning("The demo screener uses fictional illustrative financial figures. Do not use these scores to make investment decisions.")
@@ -242,3 +244,109 @@ with tab4:
             st.metric("Endpoint checks returning records", len(usable))
             st.info("A successful response only confirms records were returned. We still need to verify reporting periods, currency, consolidated vs standalone basis, units and agreement with company filings before using any figures.")
             st.caption("If results show 401, check the secret. If 402/403, the endpoint may not be included in your plan. If zero records, the symbol format or coverage may differ.")
+
+
+with tab5:
+    st.subheader("Financial Reports Importer")
+    st.write("Import company filings for review, or upload a structured CSV/XLSX to calculate basic financial metrics. This does not automatically certify figures or make investment recommendations.")
+    st.warning("PDF extraction is a review aid, not reliable end-to-end financial-data extraction. Always check figures against the original filing, units, consolidated/standalone basis and fiscal year before using them.")
+
+    template_columns = [
+        "Company Name", "NSE Symbol", "FY", "Revenue (₹ Cr)", "Net Profit (₹ Cr)",
+        "EBIT (₹ Cr)", "Total Debt (₹ Cr)", "Equity (₹ Cr)", "Capital Employed (₹ Cr)",
+        "Market Cap (₹ Cr)", "P/E", "Industry P/E", "Source Filing", "Source Page/URL", "Basis"
+    ]
+    template_example = pd.DataFrame(columns=template_columns)
+    st.download_button("Download financial data template (CSV)", template_example.to_csv(index=False).encode("utf-8"),
+                       "financial_data_template.csv", "text/csv")
+
+    upload = st.file_uploader("Upload annual report / quarterly result PDF, or structured CSV/XLSX", type=["pdf", "csv", "xlsx", "xls"], key="financial_report_upload")
+    if upload is not None:
+        suffix = Path(upload.name).suffix.lower()
+        if suffix == ".pdf":
+            try:
+                import pdfplumber
+                with pdfplumber.open(BytesIO(upload.getvalue())) as pdf:
+                    st.caption(f"PDF loaded: {len(pdf.pages)} pages. Extracting text and candidate tables for manual verification.")
+                    page_options = list(range(1, len(pdf.pages) + 1))
+                    selected_pages = st.multiselect("Choose pages to inspect", page_options,
+                                                    default=page_options[:min(3, len(page_options))])
+                    extracted_text = []
+                    extracted_tables = []
+                    for page_num in selected_pages:
+                        page = pdf.pages[page_num - 1]
+                        extracted_text.append(f"--- Page {page_num} ---\n{page.extract_text() or '[No selectable text found on this page]'}")
+                        for table_idx, table in enumerate(page.extract_tables() or [], start=1):
+                            if table:
+                                df_table = pd.DataFrame(table)
+                                extracted_tables.append((page_num, table_idx, df_table))
+                    if extracted_text:
+                        with st.expander("Extracted page text (review against PDF)", expanded=False):
+                            st.text_area("Text", "\n\n".join(extracted_text), height=280, key="pdf_extracted_text")
+                            st.download_button("Download extracted text", "\n\n".join(extracted_text).encode("utf-8"),
+                                               "extracted_filing_text.txt", "text/plain")
+                    if extracted_tables:
+                        table_labels = [f"Page {page_num}, table {table_idx}" for page_num, table_idx, _ in extracted_tables]
+                        chosen = st.selectbox("Preview an extracted table", range(len(table_labels)),
+                                              format_func=lambda i: table_labels[i])
+                        table_df = extracted_tables[chosen][2]
+                        st.dataframe(table_df, use_container_width=True, hide_index=True)
+                        st.download_button("Download selected table as CSV", table_df.to_csv(index=False, header=False).encode("utf-8"),
+                                           f"pdf_page_{extracted_tables[chosen][0]}_table_{extracted_tables[chosen][1]}.csv", "text/csv")
+                    elif selected_pages:
+                        st.info("No tables were detected on the selected pages. The PDF may be scanned or use a layout that table extraction cannot interpret. Try pages with selectable text, or enter verified values in the template.")
+            except ImportError:
+                st.error("PDF reader dependency is missing. Confirm requirements.txt includes pdfplumber, then reboot the Streamlit app.")
+            except Exception as exc:
+                st.error(f"Could not read this PDF: {str(exc)[:250]}")
+        else:
+            try:
+                if suffix == ".csv":
+                    raw_df = pd.read_csv(upload)
+                else:
+                    raw_df = pd.read_excel(upload)
+                st.write("Uploaded data preview")
+                st.dataframe(raw_df.head(100), use_container_width=True, hide_index=True)
+                missing = [c for c in template_columns if c not in raw_df.columns]
+                if missing:
+                    st.error("This file does not use the full template column names. Download the template above, copy verified figures into it, and upload again. Missing columns: " + ", ".join(missing))
+                else:
+                    data_df = raw_df.copy()
+                    numeric_cols = ["Revenue (₹ Cr)", "Net Profit (₹ Cr)", "EBIT (₹ Cr)", "Total Debt (₹ Cr)",
+                                    "Equity (₹ Cr)", "Capital Employed (₹ Cr)", "Market Cap (₹ Cr)", "P/E", "Industry P/E"]
+                    for col in numeric_cols:
+                        data_df[col] = pd.to_numeric(data_df[col], errors="coerce")
+                    data_df["FY sort"] = data_df["FY"].astype(str).str.extract(r"(\d{4})", expand=False)
+                    data_df["FY sort"] = pd.to_numeric(data_df["FY sort"], errors="coerce")
+                    metric_rows = []
+                    for (symbol, company), grp in data_df.groupby(["NSE Symbol", "Company Name"], dropna=False):
+                        grp = grp.sort_values("FY sort")
+                        latest = grp.iloc[-1]
+                        row = {"NSE Symbol": symbol, "Company Name": company, "Latest FY": latest["FY"],
+                               "Revenue (₹ Cr)": latest["Revenue (₹ Cr)"], "Net Profit (₹ Cr)": latest["Net Profit (₹ Cr)"],
+                               "Market Cap (₹ Cr)": latest["Market Cap (₹ Cr)"], "P/E": latest["P/E"], "Industry P/E": latest["Industry P/E"],
+                               "Debt/Equity": latest["Total Debt (₹ Cr)"] / latest["Equity (₹ Cr)"] if pd.notna(latest["Total Debt (₹ Cr)"]) and pd.notna(latest["Equity (₹ Cr)"]) and latest["Equity (₹ Cr)"] != 0 else np.nan,
+                               "ROCE (%)": latest["EBIT (₹ Cr)"] / latest["Capital Employed (₹ Cr)"] * 100 if pd.notna(latest["EBIT (₹ Cr)"]) and pd.notna(latest["Capital Employed (₹ Cr)"]) and latest["Capital Employed (₹ Cr)"] != 0 else np.nan,
+                               "Annual rows supplied": len(grp), "Source Filing": latest["Source Filing"], "Source Page/URL": latest["Source Page/URL"], "Basis": latest["Basis"]}
+                        for metric_col, output_col in [("Revenue (₹ Cr)", "Sales CAGR 3Y (%)"), ("Net Profit (₹ Cr)", "Profit CAGR 3Y (%)")]:
+                            values = grp[metric_col].dropna()
+                            # CAGR only when at least four annual observations exist and the earliest/latest values are positive.
+                            if len(values) >= 4 and values.iloc[0] > 0 and values.iloc[-1] > 0:
+                                row[output_col] = ((values.iloc[-1] / values.iloc[0]) ** (1 / (len(values) - 1)) - 1) * 100
+                            else:
+                                row[output_col] = np.nan
+                        row["P/E below industry P/E"] = bool(pd.notna(row["P/E"]) and pd.notna(row["Industry P/E"]) and row["P/E"] < row["Industry P/E"])
+                        metric_rows.append(row)
+                    metrics_df = pd.DataFrame(metric_rows)
+                    st.subheader("Calculated metrics (based only on uploaded figures)")
+                    st.dataframe(metrics_df, use_container_width=True, hide_index=True)
+                    st.download_button("Download calculated metrics", metrics_df.to_csv(index=False).encode("utf-8"),
+                                       "calculated_financial_metrics.csv", "text/csv")
+                    st.download_button("Download uploaded data copy", data_df.drop(columns=["FY sort"]).to_csv(index=False).encode("utf-8"),
+                                       "uploaded_financial_data_copy.csv", "text/csv")
+                    st.caption("CAGR is shown only when at least four positive annual values are available. The calculation uses the first and last available observations; check that fiscal years are consecutive. ROCE = EBIT ÷ capital employed. Debt/equity = total debt ÷ equity. Ensure all figures are in ₹ crore and use a consistent consolidated or standalone basis.")
+            except Exception as exc:
+                st.error(f"Could not read this file: {str(exc)[:250]}")
+
+    st.markdown("**Recommended workflow for the first five companies**")
+    st.markdown("1. Download annual reports/results from each company's official investor-relations website or exchange filing.\n2. Use PDF extraction to locate likely tables, but verify every value against the PDF.\n3. Enter verified annual figures into the CSV template, one row per company per financial year.\n4. Upload the completed CSV/XLSX to calculate preliminary metrics.\n5. Keep the filing name/link, page number, reporting period, and consolidated/standalone basis with every row.")
